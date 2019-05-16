@@ -1,3 +1,4 @@
+import cv2
 import pickle
 import random
 import string
@@ -12,22 +13,10 @@ from keras.preprocessing.image import ImageDataGenerator
 from keras_tqdm import TQDMNotebookCallback
 from keras.preprocessing import image
 
-_base = {
-    'inceptionv3': keras.applications.inception_v3.InceptionV3,
-    'vgg16': keras.applications.vgg16.VGG16,
-    'resnet50': keras.applications.resnet50.ResNet50
-}
+from deepxray.transferlearning.utils import base_network_init, preprocessed_input, base_sizes, base_output_pooling
+from deepxray.transferlearning.visualization import SaliencyHeatMap
 
-_preprocessed_input = {
-    'inceptionv3': keras.applications.inception_v3.preprocess_input,
-    'vgg16': keras.applications.vgg16.preprocess_input,
-    'resnet50': keras.applications.resnet50.preprocess_input
-}
-
-_base_output_pooling = {
-    'average': keras.layers.GlobalAveragePooling2D,
-    'max': keras.layers.GlobalMaxPool2D
-}
+_explainer = SaliencyHeatMap()
 
 
 class DenseLearner:
@@ -49,32 +38,31 @@ class DenseLearner:
                                                   ''.join(random.choice(string.ascii_lowercase) for _ in range(10)))
         if 'path' in kwargs:
             self._compile(kwargs.get('path'))
-        self._img_size = None
+
         self._class_mode = 'binary' if self._objective == 'binary' else 'categorical'
 
         self._class_to_idx = None
         self._idx_to_class = None
 
-    def fit(self, train_generator, val_generator, train_steps, val_steps, epochs,  unfreeze=0, optimizer=None):
-        pass
+    def fit(self, train_generator, val_generator, train_steps, val_steps, epochs, unfreeze=0, optimizer=None,
+            use_default_callbacks=True,
+            custom_callbacks=None, load_from_checkpoint=False):
+        pass  # optional, maybe won't be implemented at all
 
     def fit_from_frame(self, train, val, x_col, y_col, train_augs_generator=None,
                        val_augs_generator=None, epochs=10, batch_size=32, unfreeze=0, optimizer=None,
-                       img_size=(299, 299), use_default_callbacks=True, custom_callbacks=None,
+                       use_default_callbacks=True, custom_callbacks=None,
                        load_from_checkpoint=False):
         if not self._classes:
             self._classes = train[y_col].unique().tolist()
             self._class_to_idx = {value: index for index, value in enumerate(self._classes)}
             self._idx_to_class = {index: value for index, value in enumerate(self._classes)}
 
-        if not self._img_size:
-            self._img_size = img_size
-
         if custom_callbacks is None:
             custom_callbacks = []
 
         if not train_augs_generator:
-            train_datagen = ImageDataGenerator(preprocessing_function=_preprocessed_input.get(self._base),
+            train_datagen = ImageDataGenerator(preprocessing_function=preprocessed_input.get(self._base),
                                                rotation_range=10,
                                                width_shift_range=0.1,
                                                height_shift_range=0.1,
@@ -84,18 +72,18 @@ class DenseLearner:
             train_augs_generator = train_datagen.flow_from_dataframe(train,
                                                                      x_col=x_col,
                                                                      y_col=y_col,
-                                                                     target_size=self._img_size,
+                                                                     target_size=base_sizes.get(self._base),
                                                                      batch_size=batch_size,
                                                                      classes=self._classes,
                                                                      class_mode=self._class_mode)
 
         if not val_augs_generator:
-            val_datagen = ImageDataGenerator(preprocessing_function=_preprocessed_input.get(self._base))
+            val_datagen = ImageDataGenerator(preprocessing_function=preprocessed_input.get(self._base))
             val_augs_generator = val_datagen.flow_from_dataframe(val,
                                                                  shuffle=False,
                                                                  x_col=x_col,
                                                                  y_col=y_col,
-                                                                 target_size=self._img_size,
+                                                                 target_size=base_sizes.get(self._base),
                                                                  batch_size=batch_size,
                                                                  classes=self._classes,
                                                                  class_mode=self._class_mode)
@@ -120,20 +108,20 @@ class DenseLearner:
     def predict_from_frame(self, frame, x_col):
         if not self._compiled_model:
             ValueError('Model is not fitted yet')
-        datagen = ImageDataGenerator(preprocessing_function=_preprocessed_input.get(self._base))
+        datagen = ImageDataGenerator(preprocessing_function=preprocessed_input.get(self._base))
         batch_generator = datagen.flow_from_dataframe(frame,
                                                       shuffle=False,
                                                       x_col=x_col,
                                                       y_col=None,
-                                                      target_size=self._img_size,
+                                                      target_size=base_sizes.get(self._base),
                                                       batch_size=1,
                                                       class_mode=None)
         return self._compiled_model.predict_generator(batch_generator, steps=frame.shape[0])
 
     def predict_from_file(self, img_name, convert_to_classes=False, threshold=0.5):
-        pil_img = image.load_img(img_name, target_size=self._img_size)
+        pil_img = image.load_img(img_name, target_size=base_sizes.get(self._base))
         img_as_array = image.img_to_array(pil_img)
-        preprocessed = _preprocessed_input.get(self._base)(img_as_array)
+        preprocessed = preprocessed_input.get(self._base)(img_as_array)
         img_tensor = np.expand_dims(preprocessed, axis=0)
 
         prediction = self._compiled_model.predict(img_tensor)[0]
@@ -158,6 +146,26 @@ class DenseLearner:
         plt.xticks(steps), plt.yticks(steps)
         plt.xlabel('Recall'), plt.ylabel('Precision')
         plt.ylim([0.0, 1.05]), plt.xlim([0.0, 1.0])
+
+    def explain_prediction(self, img_name, threshold=0.5, filename='explanation.bmp', return_thumbnail=True):
+        prediction = self.predict_from_file(img_name, threshold=threshold)
+        if len(prediction) == 1:
+            if prediction[0] < threshold:
+                print('Predicted class {}, no explanation provided'.format(self._classes[0]))
+                return
+            print('Predicted class {}, output heatmap'.format(self._classes[1]))
+            heatmap = _explainer.get_plot(img_name, self._compiled_model, 0, base_network=self._base)
+        else:
+            class_id = np.argmax(prediction)
+            print('Predicted class {}, output heatmap for a given class'.format(self._classes[int(class_id)]))
+            heatmap = _explainer.get_plot(img_name, self._compiled_model, class_id, base_network=self._base)
+        if filename:
+            cv2.imwrite(filename, heatmap)
+            print('Explanation saved to {}'.format(filename))
+        pil = image.array_to_img(heatmap)
+        if return_thumbnail:
+            pil.thumbnail(base_sizes.get(self._base))
+        return pil
 
     def save(self, filename):
         if not self._compiled_model:
@@ -186,15 +194,15 @@ class DenseLearner:
         return self._compile(path, optimizer, unfreeze)
 
     def _compile(self, path=None, optimizer=None, unfreeze=0):
-        if self._base not in _base:
-            ValueError('Unknown base network, available are: {}'.format(','.join(_base.keys())))
-        if self._pooling not in _base_output_pooling:
-            ValueError('Unknown pooling layer, available are: {}'.format(','.join(_base.keys())))
+        if self._base not in base_network_init:
+            ValueError('Unknown base network, available are: {}'.format(','.join(base_network_init.keys())))
+        if self._pooling not in base_output_pooling:
+            ValueError('Unknown pooling layer, available are: {}'.format(','.join(base_network_init.keys())))
 
-        base = _base.get(self._base)(weights='imagenet', include_top=False)
+        base = base_network_init.get(self._base)(weights='imagenet', include_top=False)
         base.trainable = False
         x = base.output
-        x = _base_output_pooling.get(self._pooling)()(x)
+        x = base_output_pooling.get(self._pooling)()(x)
         for dense_units, dropout_units in zip(self._layers, self._dropout):
             x = keras.layers.Dense(dense_units)(x)
             x = keras.layers.BatchNormalization()(x)
