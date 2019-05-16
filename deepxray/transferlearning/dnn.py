@@ -5,7 +5,6 @@ import string
 import numpy as np
 from sklearn.metrics import precision_recall_curve
 import matplotlib.pyplot as plt
-from sklearn.utils.fixes import signature
 
 import keras
 from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
@@ -49,19 +48,20 @@ class DenseLearner:
         self._checkpoint_path = '{}_{}.h5'.format(self._base,
                                                   ''.join(random.choice(string.ascii_lowercase) for _ in range(10)))
         if 'path' in kwargs:
-            self._compile_model(kwargs.get('path'))
+            self._compile(kwargs.get('path'))
         self._img_size = None
         self._class_mode = 'binary' if self._objective == 'binary' else 'categorical'
 
         self._class_to_idx = None
         self._idx_to_class = None
 
-    def fit(self, train_generator, val_generator, train_steps, val_steps, epochs, optimizer=None):
+    def fit(self, train_generator, val_generator, train_steps, val_steps, epochs,  unfreeze=0, optimizer=None):
         pass
 
     def fit_from_frame(self, train, val, x_col, y_col, train_augs_generator=None,
-                       val_augs_generator=None, epochs=10, batch_size=32, optimizer=None,
-                       img_size=(299, 299), use_default_callbacks=True, custom_callbacks=None):
+                       val_augs_generator=None, epochs=10, batch_size=32, unfreeze=0, optimizer=None,
+                       img_size=(299, 299), use_default_callbacks=True, custom_callbacks=None,
+                       load_from_checkpoint=False):
         if not self._classes:
             self._classes = train[y_col].unique().tolist()
             self._class_to_idx = {value: index for index, value in enumerate(self._classes)}
@@ -105,7 +105,8 @@ class DenseLearner:
 
         if use_default_callbacks:
             custom_callbacks = custom_callbacks + self._default_callbacks()
-        self._compile_model(optimizer=optimizer)
+        path = self._checkpoint_path if load_from_checkpoint else None
+        self._compile(path=path, optimizer=optimizer, unfreeze=unfreeze)
 
         return self._compiled_model.fit_generator(
             train_augs_generator,
@@ -181,7 +182,10 @@ class DenseLearner:
     def get_classes(self):
         return self._classes
 
-    def _compile_model(self, path=None, optimizer=None):
+    def compile(self, path=None, optimizer=None, unfreeze=0):
+        return self._compile(path, optimizer, unfreeze)
+
+    def _compile(self, path=None, optimizer=None, unfreeze=0):
         if self._base not in _base:
             ValueError('Unknown base network, available are: {}'.format(','.join(_base.keys())))
         if self._pooling not in _base_output_pooling:
@@ -203,19 +207,29 @@ class DenseLearner:
         self._compiled_model = keras.Model(inputs=base.input, outputs=output)
         optimizer = optimizer if optimizer else keras.optimizers.Adam()
 
+        if path:
+            self._compiled_model.load_weights(path)
+            print('Weights loaded')
+        if unfreeze > 0:
+            for layer in self._compiled_model.layers[:len(base.layers)]:
+                layer.trainable = False
+            for layer in self._compiled_model.layers[::-1]:
+                if unfreeze <= 0:
+                    break
+                if 'conv2d' in layer.name:
+                    unfreeze -= 1
+                layer.trainable = True
+
         self._compiled_model.compile(
             loss='binary_crossentropy' if self._objective == 'binary' else 'categorical_crossentropy',
             optimizer=optimizer,
             metrics=['accuracy'])
-        if path:
-            self._compiled_model.load_weights(path)
-            print('Weights loaded')
         print('Model compiled')
 
     def _default_callbacks(self):
         return [
-            ModelCheckpoint(self._checkpoint_path, monitor='val_acc', verbose=1, save_best_only=True,
+            ModelCheckpoint(self._checkpoint_path, monitor='val_loss', verbose=1, save_best_only=True,
                             save_weights_only=True),
-            ReduceLROnPlateau(monitor='val_acc', patience=3, verbose=1, factor=0.65, min_lr=0.00001),
-            EarlyStopping(monitor='val_acc', patience=8),
+            ReduceLROnPlateau(monitor='val_loss', patience=3, verbose=1, factor=0.65, min_lr=0.00001),
+            EarlyStopping(monitor='val_loss', patience=8),
             TQDMNotebookCallback()]
