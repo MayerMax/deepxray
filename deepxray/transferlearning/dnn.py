@@ -147,18 +147,20 @@ class DenseLearner:
         plt.xlabel('Recall'), plt.ylabel('Precision')
         plt.ylim([0.0, 1.05]), plt.xlim([0.0, 1.0])
 
-    def explain_prediction(self, img_name, threshold=0.5, filename='explanation.bmp', return_thumbnail=True):
+    def explain_prediction(self, img_name, layer_name=None, threshold=0.5, filename='explanation.bmp', return_thumbnail=True):
         prediction = self.predict_from_file(img_name, threshold=threshold)
         if len(prediction) == 1:
             if prediction[0] < threshold:
                 print('Predicted class {}, no explanation provided'.format(self._classes[0]))
                 return
             print('Predicted class {}, output heatmap'.format(self._classes[1]))
-            heatmap = _explainer.get_plot(img_name, self._compiled_model, 0, base_network=self._base)
+            heatmap = _explainer.get_plot(img_name, self._compiled_model, 0, layer_name=layer_name,
+                                          base_network=self._base)
         else:
             class_id = np.argmax(prediction)
             print('Predicted class {}, output heatmap for a given class'.format(self._classes[int(class_id)]))
-            heatmap = _explainer.get_plot(img_name, self._compiled_model, class_id, base_network=self._base)
+            heatmap = _explainer.get_plot(img_name, self._compiled_model, class_id, layer_name=layer_name,
+                                          base_network=self._base)
         if filename:
             cv2.imwrite(filename, heatmap)
             print('Explanation saved to {}'.format(filename))
