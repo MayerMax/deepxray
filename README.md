@@ -8,7 +8,7 @@ This repository contains tools to simplify the process of developing systems usi
 
 When a new module or functionality will be added to the master branch of the project, the ``README`` will be updated to show the usage example.
 
-### Simple transfer learning
+### 1. Transfer learning
 A classical approach to deal with a new task in computer vision is to use some architecture pretrained on a large dataset and replace original Fully-connected layers with a custom network and train only this part.
 
 You can perform transfer learning using the functionality of ``DenseLearner`` class.
@@ -41,3 +41,37 @@ learner = DenseLearner.load('inception_base_unfreeze.pickle')
 ```
 
 Now we are ready to make predictions. ``DenseLearner`` class has all the necessary methods to return predictions given path to image or dataframe with paths. To do this use ``predict_from_file`` or ``predict_from_frame`` methods.
+
+In medicine, it is crucial to have a robust and explainable model. ``DenseLearner`` can plot a precision-recall curve to let you understand the capabilities of your solution and output a heatmap picture to explain why it predicted this or another class. It is also possible to manually choose threshold with binary problems to find the best properties with regard to your task.
+
+```python
+learner.plot_precision_recall_curve(val, x_col='image_path', y_col='target')
+```
+![precision-recall](https://i.imgur.com/EF57DWD.png)
+
+
+To get the most probable class and the reason why the model predicts it, call the following method:
+```python
+path_to_test_image = 'test.bmp'
+prediction, pil = learner.explain_prediction(path_to_test_image, filename='incept.bmp')
+pil
+```
+![explanation](https://i.imgur.com/6FL5wJgm.png)
+
+The model predicts ``Pathology`` class and correctly detect area with some blackout where tuberculosis is allocated.
+``DenseLearner`` uses popular GRAD-cam algorithm for visual explanations and might applied to any conolutional layer.
+ However, it might be not informative if the base network layers are not fine-tuned or trained from scratch due to the specificity of the data it was initially trained.
+ 
+ ### 2. Demo application.
+ In this repository, you can find a source-code for a demo web-based application for detecting tuberculosis from x-ray images of lungs.
+ To launch it you need to clone a repository and locate all the files that ``DenseLearner`` object creates after calling to the ``save`` method.
+ ```bash
+ git clone https://github.com/MayerMax/deepxray.git
+ cd deepxray\deepxray\diagnosis-support-application
+ python server.py saved_model.pickle
+ ```
+ Visually it looks as following:<br><br>
+ ![web-app](https://i.imgur.com/SIAXkJzm.png)
+ <br>
+ 
+ :point_up: :point_up: :point_up: *Only for demonstration purpose!*
