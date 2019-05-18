@@ -1,10 +1,18 @@
 import random
 import string
-import sys
 import bottle
 from bottle import route, request, error, template, static_file
+import os
+import sys
 
 from deepxray.transferlearning.dnn import DenseLearner
+
+root_folders = ['..', '../..', './']
+root_folders = [os.path.abspath(os.path.join(x)) for x in root_folders]
+for path in root_folders:
+    if path not in sys.path:
+        sys.path.append(path)
+
 
 app = bottle.app()
 model = DenseLearner.load(sys.argv[1])
