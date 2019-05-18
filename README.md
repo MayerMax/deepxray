@@ -71,7 +71,7 @@ The model predicts ``Pathology`` class and correctly detect area with some black
  python server.py saved_model.pickle
  ```
  Visually it looks as following:<br><br>
- ![web-app](https://i.imgur.com/SIAXkJzm.png)
+ ![web-app](https://i.imgur.com/SIAXkJz.png)
  <br>
  
  :point_up: :point_up: :point_up: *Only for demonstration purpose!*
